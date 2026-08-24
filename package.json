@@ -1,0 +1,21 @@
+{
+  "name": "gitops-cli",
+  "version": "1.0.0",
+  "description": "CLI tool for GitOps Platform",
+  "main": "dist/index.js",
+  "bin": {
+    "gops": "./dist/index.js"
+  },
+  "scripts": {
+    "build": "tsc",
+    "start": "tsx index.ts"
+  },
+  "dependencies": {
+    "commander": "^12.0.0"
+  },
+  "devDependencies": {
+    "@types/node": "^20.0.0",
+    "tsx": "^4.7.0",
+    "typescript": "^5.0.0"
+  }
+}

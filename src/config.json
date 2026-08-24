@@ -1,0 +1,12 @@
+{
+  "apiUrl": "https://api.ejemplo.com",
+  "apiKey": "secret-key-123",
+  "serviceSlug": "billing-service",
+  "projectSlug": "core-platform",
+  "gitBranch": "main",
+  "gitRepoUrl": "https://github.com/org/repo",
+  "gitAuthor": "Dev Name",
+  "gitVersion": "v1.2.0",
+  "gitCommit": "a1b2c3d4",
+  "tags": ["prod", "critical"]
+}
