@@ -74,12 +74,12 @@ export class ScanCommand extends Command {
             status: 'completed',
           });
           console.log('✅ Escaneo con Trivy completado.');
-        } else if(tool === 'sbom') {
+        } else if(tool === 'sbom' || tool === 'syft') {
           console.log(`🔧 Preparando para escanear con ${tool}...`);
           const scanSyftProgress = await this.callApi('scan', 'POST', {
             service: this.params.service,
             project: this.params.project,
-            tool: 'sbom',
+            tool,
             status: 'in_progress', // Add status field to indicate the scan is in progress
           });
 
@@ -91,7 +91,7 @@ export class ScanCommand extends Command {
             await this.callApi('scan', 'POST', {
               analysisId: analysisID,
               result: {},
-              tool: 'sbom',
+              tool,
               status: 'failed',
               error: error.message,
             });
@@ -104,10 +104,10 @@ export class ScanCommand extends Command {
           await this.callApi('scan', 'POST', {
             analysisId: analysisID,
             result: syftResults,
-            tool: 'sbom',
+            tool,
             status: 'completed',
           });
-          console.log('✅ Escaneo con Syft completado.');
+          console.log(`✅ Escaneo con ${tool} completado.`);
         } else if(tool === 'gitleaks') {
           console.log(`🔧 Preparando para escanear con ${tool}...`);
           const scanGitleaksProgress = await this.callApi('scan', 'POST', {

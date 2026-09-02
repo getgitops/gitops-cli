@@ -16,7 +16,7 @@ export class Command {
         const url = `${this.apiURL}/${endpoint}`;
         const headers: Record<string, string> = {
             'Content-Type': 'application/json',
-            'Authorization': `${this.params.apiKey || ''}`,
+            'Authorization': `Bearer ${this.params.apiKey || ''}`,
         };
         // console.log('Headers', headers);
         const result = fetch(url, {

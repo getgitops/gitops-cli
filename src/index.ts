@@ -24,7 +24,7 @@ const program = new Command();
 program
   .name('gops')
   .description('GitOps Platform Command Line Interface')
-  .version('1.0.0');
+  .version(require('../package.json').version);
 
 const creport = program
   .command('creport')
