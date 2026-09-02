@@ -1,6 +1,6 @@
 {
   "name": "@getgitops/cli",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "CLI tool for GitOps Platform",
   "main": "dist/index.js",
   "files": [
