@@ -5,7 +5,7 @@ import { homedir, platform, arch } from 'node:os';
 
 export function ensureTrivyInstalled(): string {
   // Directorio local para guardar dependencias de tu CLI
-  const binDir = join(homedir(), '.mi-cli', 'bin');
+  const binDir = join(homedir(), '.gitops-cli', 'bin');
   const trivyPath = join(binDir, 'trivy');
 
   // Si ya existe, retornar la ruta directamente
@@ -28,7 +28,7 @@ export function ensureTrivyInstalled(): string {
 }
 
 export function ensureSyftInstalled(): string {
-  const binDir = join(homedir(), '.mi-cli', 'bin');
+  const binDir = join(homedir(), '.gitops-cli', 'bin');
   const syftPath = join(binDir, 'syft');
 
   if (existsSync(syftPath)) {
@@ -49,7 +49,7 @@ export function ensureSyftInstalled(): string {
 }
 
 export function ensureGitleaksInstalled(): string {
-  const binDir = join(homedir(), '.mi-cli', 'bin');
+  const binDir = join(homedir(), '.gitops-cli', 'bin');
   const gitleaksPath = join(binDir, 'gitleaks');
 
   if (existsSync(gitleaksPath)) {
