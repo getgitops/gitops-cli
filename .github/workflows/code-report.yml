@@ -31,7 +31,7 @@ jobs:
           gops creport scan
           --api-url "$API_URL"
           --api-key "$API_KEY"
-          --service gitops
+          --service gitops-cli
           --project gitops
           --git-branch "${GITHUB_REF_NAME}"
           --git-repo-url "${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}"
