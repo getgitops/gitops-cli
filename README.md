@@ -8,6 +8,34 @@ Command-line interface for GitOps Platform.
 npm install --global @getgitops/cli
 ```
 
+## Vault
+
+Export the secrets of a project path to a local file:
+
+```bash
+gops vault export \
+	--api-url https://app.getgitops.com/api \
+	--api-key "$GOPS_API_KEY" \
+	--project-id 00000000-0000-0000-0000-000000000000 \
+	--path / \
+	--env production \
+	--format env \
+	--output .env.production
+```
+
+`--format` accepts `env` and `json`. Run a command with the path's secrets
+injected as environment variables:
+
+```bash
+gops vault run \
+	--api-url https://app.getgitops.com/api \
+	--api-key "$GOPS_API_KEY" \
+	--project-id 00000000-0000-0000-0000-000000000000 \
+	--path / \
+	--env production \
+	-- "echo $API_KEY"
+```
+
 ## Releases
 
 Releases are published automatically to npm and GitHub when a version tag is

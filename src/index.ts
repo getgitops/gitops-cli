@@ -1,10 +1,8 @@
 #!/usr/bin/env node
 
 import { Command } from 'commander';
-import fs from 'fs';
-import path from 'path';
-
-import { authApiKey } from './utils/auth';
+import { VaultExportCommand } from './commands/vault/export';
+import { VaultRunCommand } from './commands/vault/run';
 
 interface Config {
   apiUrl?: string;
@@ -78,5 +76,47 @@ creport
       process.exit(1);
     }
   });
+
+const vault = program
+  .command('vault')
+  .description('Commands for exporting and injecting vault secrets');
+
+function addVaultOptions(command: Command) {
+  return command
+    .requiredOption('--api-url <url>', 'API base URL')
+    .requiredOption('--api-key <key>', 'API key for authentication')
+    .requiredOption('--project-id <id>', 'Project ID')
+    .requiredOption('--path <path>', 'Vault path to export')
+    .requiredOption('--env <environment>', 'Vault environment slug');
+}
+
+addVaultOptions(
+  vault
+    .command('export')
+    .description('Exports vault secrets to a file')
+    .requiredOption('--format <format>', 'Output format: env or json')
+    .requiredOption('--output <file>', 'Path of the exported file'),
+).action(async (options) => {
+  try {
+    await new VaultExportCommand(options).execute();
+  } catch (error: unknown) {
+    console.error(`Error exporting vault secrets: ${error instanceof Error ? error.message : error}`);
+    process.exitCode = 1;
+  }
+});
+
+addVaultOptions(
+  vault
+    .command('run [command...]')
+    .description('Runs a command with vault secrets injected as environment variables')
+    .allowUnknownOption(true),
+).action(async (command: string[], options) => {
+  try {
+    await new VaultRunCommand({ ...options, command }).execute();
+  } catch (error: unknown) {
+    console.error(`Error running command with vault secrets: ${error instanceof Error ? error.message : error}`);
+    process.exitCode = 1;
+  }
+});
 
 program.parse(process.argv);
