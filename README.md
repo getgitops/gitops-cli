@@ -36,6 +36,42 @@ gops vault run \
 	-- "echo $API_KEY"
 ```
 
+Manage an individual secret with `create`, `get`, `update`, or `delete`:
+
+```bash
+gops vault secret create \
+	--api-url https://app.getgitops.com/api \
+	--api-key "$GOPS_API_KEY" \
+	--project-id 00000000-0000-0000-0000-000000000000 \
+	--path /database \
+	--key DB_PASSWORD \
+	--env production \
+	--value "$DB_PASSWORD"
+
+gops vault secret get \
+	--api-url https://app.getgitops.com/api \
+	--api-key "$GOPS_API_KEY" \
+	--project-id 00000000-0000-0000-0000-000000000000 \
+	--path /database \
+	--key DB_PASSWORD
+
+gops vault secret update \
+	--api-url https://app.getgitops.com/api \
+	--api-key "$GOPS_API_KEY" \
+	--project-id 00000000-0000-0000-0000-000000000000 \
+	--path /database \
+	--key DB_PASSWORD \
+	--env production \
+	--value "$NEW_DB_PASSWORD"
+
+gops vault secret delete \
+	--api-url https://app.getgitops.com/api \
+	--api-key "$GOPS_API_KEY" \
+	--project-id 00000000-0000-0000-0000-000000000000 \
+	--path /database \
+	--key DB_PASSWORD
+```
+
 ## Releases
 
 Releases are published automatically to npm and GitHub when a version tag is

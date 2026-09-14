@@ -3,6 +3,7 @@
 import { Command } from 'commander';
 import { VaultExportCommand } from './commands/vault/export';
 import { VaultRunCommand } from './commands/vault/run';
+import { VaultSecretCommand } from './commands/vault/secret';
 
 interface Config {
   apiUrl?: string;
@@ -118,5 +119,53 @@ addVaultOptions(
     process.exitCode = 1;
   }
 });
+
+const vaultSecret = vault.command('secret').description('Manage vault secrets');
+
+function addVaultSecretOptions(command: Command) {
+  return command
+    .requiredOption('--api-url <url>', 'API base URL')
+    .requiredOption('--api-key <key>', 'API key for authentication')
+    .requiredOption('--project-id <id>', 'Project ID')
+    .requiredOption('--path <path>', 'Vault path')
+    .requiredOption('--key <key>', 'Secret key');
+}
+
+function runVaultSecret(action: keyof Pick<VaultSecretCommand, 'create' | 'get' | 'update' | 'delete'>) {
+  return async (options: Record<string, unknown>) => {
+    try {
+      await new VaultSecretCommand(options)[action]();
+    } catch (error: unknown) {
+      console.error(`Error managing vault secret: ${error instanceof Error ? error.message : error}`);
+      process.exitCode = 1;
+    }
+  };
+}
+
+addVaultSecretOptions(
+  vaultSecret
+    .command('create')
+    .description('Creates a vault secret')
+    .requiredOption('--env <environment>', 'Vault environment slug')
+    .requiredOption('--value <value>', 'Secret value')
+    .option('--description <description>', 'Secret description'),
+).action(runVaultSecret('create'));
+
+addVaultSecretOptions(vaultSecret.command('get').description('Gets a vault secret')).action(
+  runVaultSecret('get'),
+);
+
+addVaultSecretOptions(
+  vaultSecret
+    .command('update')
+    .description('Updates a vault secret value')
+    .requiredOption('--env <environment>', 'Vault environment slug')
+    .requiredOption('--value <value>', 'Secret value')
+    .option('--description <description>', 'Secret description'),
+).action(runVaultSecret('update'));
+
+addVaultSecretOptions(vaultSecret.command('delete').description('Deletes a vault secret')).action(
+  runVaultSecret('delete'),
+);
 
 program.parse(process.argv);
