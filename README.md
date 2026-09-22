@@ -14,7 +14,7 @@ Export the secrets of a project path to a local file:
 
 ```bash
 gops vault export \
-	--api-url https://app.getgitops.com/api \
+	--api-url https://cloud.getgitops.com/api \
 	--api-key "$GOPS_API_KEY" \
 	--project-id 00000000-0000-0000-0000-000000000000 \
 	--path / \
@@ -28,7 +28,7 @@ injected as environment variables:
 
 ```bash
 gops vault run \
-	--api-url https://app.getgitops.com/api \
+	--api-url https://cloud.getgitops.com/api \
 	--api-key "$GOPS_API_KEY" \
 	--project-id 00000000-0000-0000-0000-000000000000 \
 	--path / \
@@ -40,7 +40,7 @@ Manage an individual secret with `create`, `get`, `update`, or `delete`:
 
 ```bash
 gops vault secret create \
-	--api-url https://app.getgitops.com/api \
+	--api-url https://cloud.getgitops.com/api \
 	--api-key "$GOPS_API_KEY" \
 	--project-id 00000000-0000-0000-0000-000000000000 \
 	--path /database \
@@ -49,14 +49,14 @@ gops vault secret create \
 	--value "$DB_PASSWORD"
 
 gops vault secret get \
-	--api-url https://app.getgitops.com/api \
+	--api-url https://cloud.getgitops.com/api \
 	--api-key "$GOPS_API_KEY" \
 	--project-id 00000000-0000-0000-0000-000000000000 \
 	--path /database \
 	--key DB_PASSWORD
 
 gops vault secret update \
-	--api-url https://app.getgitops.com/api \
+	--api-url https://cloud.getgitops.com/api \
 	--api-key "$GOPS_API_KEY" \
 	--project-id 00000000-0000-0000-0000-000000000000 \
 	--path /database \
@@ -65,7 +65,7 @@ gops vault secret update \
 	--value "$NEW_DB_PASSWORD"
 
 gops vault secret delete \
-	--api-url https://app.getgitops.com/api \
+	--api-url https://cloud.getgitops.com/api \
 	--api-key "$GOPS_API_KEY" \
 	--project-id 00000000-0000-0000-0000-000000000000 \
 	--path /database \
