@@ -1,122 +1,97 @@
-import { execSync } from 'node:child_process';
-import { existsSync, mkdirSync } from 'node:fs';
+import { execFileSync } from 'node:child_process';
+import { createHash } from 'node:crypto';
+import { chmodSync, existsSync, mkdirSync, readFileSync, renameSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { homedir, platform, arch } from 'node:os';
+import { PINNED_TOOLS, ToolName } from './tool-versions';
 
-export function ensureTrivyInstalled(): string {
-  // Directorio local para guardar dependencias de tu CLI
-  const binDir = join(homedir(), '.gitops-cli', 'bin');
-  const trivyPath = join(binDir, 'trivy');
+// Cada versión se instala en su propio directorio, así al subir la versión
+// fijada se descarga la nueva y nunca se reutiliza un binario no verificado.
+// GOPS_TOOLS_DIR permite usar binarios preinstalados (p. ej. en la imagen Docker,
+// donde los CI cambian HOME).
+const TOOLS_DIR = process.env.GOPS_TOOLS_DIR || join(homedir(), '.gitops-cli', 'tools');
 
-  // Si ya existe, retornar la ruta directamente
-  if (existsSync(trivyPath)) {
-    return trivyPath;
-  }
+const DISPLAY_NAMES: Record<ToolName, string> = {
+  trivy: 'Trivy',
+  syft: 'Syft',
+  gitleaks: 'Gitleaks',
+};
 
-  console.log('Instalando Trivy por primera vez...');
-  mkdirSync(binDir, { recursive: true });
-
-  // El flag -b redirige la descarga al directorio sin requerir sudo
-  const installCmd = `curl -sfL https://raw.githubusercontent.com/aquasecurity/trivy/main/contrib/install.sh | sh -s -- -b "${binDir}"`;
-
-  try {
-    execSync(installCmd, { stdio: 'inherit' });
-    return trivyPath;
-  } catch (error) {
-    throw new Error(`Error al instalar Trivy automáticamente: ${(error as Error).message}`);
-  }
+function sha256File(path: string): string {
+  return createHash('sha256').update(readFileSync(path)).digest('hex');
 }
 
-export function ensureSyftInstalled(): string {
-  const binDir = join(homedir(), '.gitops-cli', 'bin');
-  const syftPath = join(binDir, 'syft');
+function ensureToolInstalled(name: ToolName): string {
+  const tool = PINNED_TOOLS[name];
+  const displayName = DISPLAY_NAMES[name];
+  const installDir = join(TOOLS_DIR, name, tool.version);
+  const binaryPath = join(installDir, name);
 
-  if (existsSync(syftPath)) {
-    return syftPath;
+  if (existsSync(binaryPath)) {
+    return binaryPath;
   }
 
-  console.log('Instalando Syft por primera vez...');
-  mkdirSync(binDir, { recursive: true });
-
-  const installCmd = `curl -sSfL https://raw.githubusercontent.com/anchore/syft/main/install.sh | sh -s -- -b "${binDir}"`;
-
-  try {
-    execSync(installCmd, { stdio: 'inherit' });
-    return syftPath;
-  } catch (error) {
-    throw new Error(`Error al instalar Syft automáticamente: ${(error as Error).message}`);
-  }
-}
-
-export function ensureGitleaksInstalled(): string {
-  const binDir = join(homedir(), '.gitops-cli', 'bin');
-  const gitleaksPath = join(binDir, 'gitleaks');
-
-  if (existsSync(gitleaksPath)) {
-    return gitleaksPath;
+  const platformKey = `${platform()}-${arch()}`;
+  const asset = tool.assets[platformKey];
+  if (!asset) {
+    throw new Error(`Plataforma no soportada para ${displayName}: ${platformKey}`);
   }
 
-  console.log('Instalando Gitleaks por primera vez...');
-  mkdirSync(binDir, { recursive: true });
+  console.log(`Instalando ${displayName} ${tool.version}...`);
 
-  const osName = platform();
-  const archName = arch();
-
-  let assetSuffix: string;
-  switch (`${osName}-${archName}`) {
-    case 'darwin-x64':
-      assetSuffix = 'darwin_x64';
-      break;
-    case 'darwin-arm64':
-      assetSuffix = 'darwin_arm64';
-      break;
-    case 'linux-x64':
-      assetSuffix = 'linux_x64';
-      break;
-    case 'linux-arm64':
-      assetSuffix = 'linux_arm64';
-      break;
-    default:
-      throw new Error(`Arquitectura no soportada para Gitleaks: ${osName}-${archName}`);
-  }
-
-  const tmpRoot = join(binDir, `gitleaks-install-${Date.now()}`);
-  const tmpArchive = join(tmpRoot, 'gitleaks.tar.gz');
+  const tmpRoot = join(TOOLS_DIR, name, `.install-${process.pid}-${Date.now()}`);
+  const archivePath = join(tmpRoot, asset.file);
+  const url = `https://github.com/${tool.repo}/releases/download/${tool.tag}/${asset.file}`;
 
   try {
     mkdirSync(tmpRoot, { recursive: true });
 
-    const latestRelease = JSON.parse(
-      execSync('curl -fsSL https://api.github.com/repos/gitleaks/gitleaks/releases/latest', { encoding: 'utf8' })
-    );
+    execFileSync('curl', ['-fsSL', '--proto', '=https', '--tlsv1.2', '-o', archivePath, url], {
+      stdio: 'inherit',
+    });
 
-    const tag = String(latestRelease.tag_name || 'v8.0.0');
-    const version = tag.replace(/^v/, '');
-    const archiveName = `gitleaks_${version}_${assetSuffix}.tar.gz`;
-    const archiveUrl = `https://github.com/gitleaks/gitleaks/releases/download/${tag}/${archiveName}`;
+    const actual = sha256File(archivePath);
+    if (actual !== asset.sha256) {
+      throw new Error(
+        `checksum SHA-256 no coincide para ${asset.file} (esperado ${asset.sha256}, obtenido ${actual}). ` +
+          'Se aborta la instalación.',
+      );
+    }
 
-    execSync(`curl -fsSL "${archiveUrl}" -o "${tmpArchive}"`, { stdio: 'inherit' });
-    execSync(`tar -xzf "${tmpArchive}" -C "${tmpRoot}"`, { stdio: 'inherit' });
+    execFileSync('tar', ['-xzf', archivePath, '-C', tmpRoot, name], { stdio: 'inherit' });
 
-    const extractedBinary = join(tmpRoot, 'gitleaks');
+    const extractedBinary = join(tmpRoot, name);
     if (!existsSync(extractedBinary)) {
-      throw new Error(`No se encontró el binario de Gitleaks extraído en ${tmpRoot}`);
+      throw new Error(`No se encontró el binario de ${displayName} en ${asset.file}`);
     }
 
-    execSync(`cp "${extractedBinary}" "${gitleaksPath}" && chmod +x "${gitleaksPath}"`, { stdio: 'inherit' });
+    chmodSync(extractedBinary, 0o755);
+    mkdirSync(installDir, { recursive: true });
+    renameSync(extractedBinary, binaryPath);
 
-    if (!existsSync(gitleaksPath)) {
-      throw new Error('Gitleaks no se instaló correctamente en la ruta esperada.');
-    }
-
-    return gitleaksPath;
+    return binaryPath;
   } catch (error) {
-    throw new Error(`Error al instalar Gitleaks automáticamente: ${(error as Error).message}`);
+    throw new Error(`Error al instalar ${displayName} automáticamente: ${(error as Error).message}`);
   } finally {
-    try {
-      execSync(`rm -rf "${tmpRoot}"`, { stdio: 'inherit' });
-    } catch {
-      // Ignorar limpieza final si falla.
-    }
+    rmSync(tmpRoot, { recursive: true, force: true });
+  }
+}
+
+export function ensureTrivyInstalled(): string {
+  return ensureToolInstalled('trivy');
+}
+
+export function ensureSyftInstalled(): string {
+  return ensureToolInstalled('syft');
+}
+
+export function ensureGitleaksInstalled(): string {
+  return ensureToolInstalled('gitleaks');
+}
+
+export function installAllTools(): void {
+  for (const name of Object.keys(PINNED_TOOLS) as ToolName[]) {
+    const path = ensureToolInstalled(name);
+    console.log(`✅ ${DISPLAY_NAMES[name]} ${PINNED_TOOLS[name].version}: ${path}`);
   }
 }

@@ -72,6 +72,34 @@ gops vault secret delete \
 	--key DB_PASSWORD
 ```
 
+## CI
+
+`gops creport scan` detects GitHub Actions, GitLab CI, Bitbucket Pipelines and
+Jenkins, and fills the git metadata (branch, commit, author, repository URL and
+ref) automatically. The `--git-*` flags take precedence.
+
+## External tools
+
+`gops creport scan` downloads Trivy, Syft and Gitleaks on first use into
+`~/.gitops-cli/tools/<tool>/<version>/`. Versions are pinned in
+`src/utils/tool-versions.ts`, together with the SHA-256 of every release
+archive; a download whose checksum does not match is rejected.
+
+Run `gops tools install` to download them ahead of time (for example, when
+building a Docker image). `GOPS_TOOLS_DIR` changes the install directory.
+
+That file is generated, do not edit it by hand. To review and bump versions
+(for example, monthly):
+
+```bash
+npm run tools:update                                  # pinned vs. available versions
+npm run tools:update -- trivy=0.75.0 syft=1.54.0      # pin new versions
+```
+
+Releases younger than 7 days are refused by default (`--allow-recent` overrides
+it) to leave time for a compromised release to be detected. Review the upstream
+release notes, commit the regenerated file and publish a new CLI version.
+
 ## Releases
 
 Releases are published automatically to npm and GitHub when a version tag is

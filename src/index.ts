@@ -4,6 +4,7 @@ import { Command } from 'commander';
 import { VaultExportCommand } from './commands/vault/export';
 import { VaultRunCommand } from './commands/vault/run';
 import { VaultSecretCommand } from './commands/vault/secret';
+import { detectCiGitInfo } from './utils/ci';
 
 interface Config {
   apiUrl?: string;
@@ -67,7 +68,8 @@ creport
         gitCommit: null,
         tags: [],
       };
-      const mergedOptions = { ...defaultOptions, ...fileConfig, ...options };
+      // Precedence: flags > CI metadata > GIT_* env vars (fallback in Command).
+      const mergedOptions = { ...defaultOptions, ...fileConfig, ...detectCiGitInfo(), ...options };
       // console.log('🔧 Parámetros de configuración finales:', mergedOptions);
       const scanCommand = new (await import('./commands/creport/scan')).ScanCommand(mergedOptions);
       await scanCommand.execute();
@@ -75,6 +77,22 @@ creport
     } catch (error: any) {
       console.error(`❌ Error en el comando scan: ${error.message || error}`);
       process.exit(1);
+    }
+  });
+
+const tools = program
+  .command('tools')
+  .description('Manage the external scanners used by creport (Trivy, Syft, Gitleaks)');
+
+tools
+  .command('install')
+  .description('Downloads and verifies the pinned versions of every scanner')
+  .action(async () => {
+    try {
+      (await import('./utils/installs')).installAllTools();
+    } catch (error: unknown) {
+      console.error(`Error installing tools: ${error instanceof Error ? error.message : error}`);
+      process.exitCode = 1;
     }
   });
 

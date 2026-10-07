@@ -1,6 +1,6 @@
 {
   "name": "@getgitops/cli",
-  "version": "1.1.0",
+  "version": "1.2.0",
   "description": "CLI tool for GitOps Platform",
   "main": "dist/index.js",
   "files": [
@@ -13,7 +13,8 @@
     "build": "tsc",
     "start": "tsx src/index.ts",
     "test": "node --import tsx --test $(find src -name '*.test.ts')",
-    "prepack": "npm run build"
+    "prepack": "npm run build",
+    "tools:update": "tsx scripts/update-tools.ts"
   },
   "repository": {
     "type": "git",

@@ -4,6 +4,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { promisify } from 'node:util';
 import { Command } from '../command';
+
 import { ensureGitleaksInstalled, ensureSyftInstalled, ensureTrivyInstalled } from '../../utils/installs';
 
 
