@@ -43,3 +43,16 @@ jobs:
           --git-version "${GITHUB_REF}"
           --git-commit "${GITHUB_SHA}"
           --tags github-actions ci
+  scan-action:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - uses: getgitops/cli-github-action@v1
+        with:
+          command: creport scan
+          api-key: ${{ secrets.GITOPS_API_KEY }}
+          service: gitops-cli
+          project: gitops
+          tags: github-actions,ci,marketplace
