@@ -1,6 +1,6 @@
 import { execFileSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { chmodSync, existsSync, mkdirSync, readFileSync, renameSync, rmSync } from 'node:fs';
+import { chmodSync, closeSync, existsSync, mkdirSync, openSync, readSync, renameSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { homedir, platform, arch } from 'node:os';
 import { PINNED_TOOLS, ToolName } from './tool-versions';
@@ -17,8 +17,20 @@ const DISPLAY_NAMES: Record<ToolName, string> = {
   gitleaks: 'Gitleaks',
 };
 
-function sha256File(path: string): string {
-  return createHash('sha256').update(readFileSync(path)).digest('hex');
+// Lee por bloques para no cargar en memoria binarios de cientos de MB.
+export function sha256File(path: string): string {
+  const hash = createHash('sha256');
+  const buffer = Buffer.alloc(1024 * 1024);
+  const fd = openSync(path, 'r');
+  try {
+    let bytesRead: number;
+    while ((bytesRead = readSync(fd, buffer, 0, buffer.length, null)) > 0) {
+      hash.update(buffer.subarray(0, bytesRead));
+    }
+  } finally {
+    closeSync(fd);
+  }
+  return hash.digest('hex');
 }
 
 function ensureToolInstalled(name: ToolName): string {
@@ -27,14 +39,22 @@ function ensureToolInstalled(name: ToolName): string {
   const installDir = join(TOOLS_DIR, name, tool.version);
   const binaryPath = join(installDir, name);
 
-  if (existsSync(binaryPath)) {
-    return binaryPath;
-  }
-
   const platformKey = `${platform()}-${arch()}`;
   const asset = tool.assets[platformKey];
   if (!asset) {
     throw new Error(`Plataforma no soportada para ${displayName}: ${platformKey}`);
+  }
+
+  // El binario instalado también se verifica en cada uso: el directorio de
+  // herramientas puede venir de una caché de CI o haber sido modificado.
+  if (existsSync(binaryPath)) {
+    if (sha256File(binaryPath) === asset.binarySha256) {
+      return binaryPath;
+    }
+    console.warn(
+      `⚠️  El binario de ${displayName} en ${binaryPath} no coincide con el SHA-256 fijado. Se reinstala.`,
+    );
+    rmSync(installDir, { recursive: true, force: true });
   }
 
   console.log(`Instalando ${displayName} ${tool.version}...`);
@@ -63,6 +83,14 @@ function ensureToolInstalled(name: ToolName): string {
     const extractedBinary = join(tmpRoot, name);
     if (!existsSync(extractedBinary)) {
       throw new Error(`No se encontró el binario de ${displayName} en ${asset.file}`);
+    }
+
+    const binaryActual = sha256File(extractedBinary);
+    if (binaryActual !== asset.binarySha256) {
+      throw new Error(
+        `checksum SHA-256 del binario extraído no coincide (esperado ${asset.binarySha256}, ` +
+          `obtenido ${binaryActual}). Se aborta la instalación.`,
+      );
     }
 
     chmodSync(extractedBinary, 0o755);

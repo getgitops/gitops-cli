@@ -1,6 +1,7 @@
 /**
  * Regenera src/utils/tool-versions.ts con las versiones fijadas de las
- * herramientas externas (trivy, syft, gitleaks) y el SHA-256 de cada archivo.
+ * herramientas externas (trivy, syft, gitleaks), el SHA-256 de cada archivo y
+ * el SHA-256 del binario que contiene.
  *
  * Uso:
  *   npm run tools:update                                   # muestra fijadas vs. disponibles
@@ -9,21 +10,40 @@
  *
  * Por defecto se rechazan releases con menos de MIN_RELEASE_AGE_DAYS días para
  * dar margen a que se detecte una release comprometida antes de adoptarla.
+ * Requiere cosign en el PATH para verificar la firma del checksums.txt de las
+ * herramientas que lo firman (trivy y syft).
  * Define GITHUB_TOKEN para evitar el rate limit de la API de GitHub.
  */
-import { writeFileSync } from 'node:fs';
+import { execFileSync } from 'node:child_process';
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { sha256File } from '../src/utils/installs';
 import type { PinnedTool, ToolName } from '../src/utils/tool-versions';
 
 const MIN_RELEASE_AGE_DAYS = 7;
 const OUTPUT_FILE = join(__dirname, '..', 'src', 'utils', 'tool-versions.ts');
+const GITHUB_OIDC_ISSUER = 'https://token.actions.githubusercontent.com';
 
 type Platform = 'darwin-arm64' | 'darwin-x64' | 'linux-arm64' | 'linux-x64';
+
+// Firma keyless (sigstore) del checksums.txt. `identity` es el workflow de
+// GitHub Actions que firma la release; cualquier otra identidad se rechaza.
+type Signature =
+  | { kind: 'bundle'; bundle: (version: string) => string; identity: (version: string) => string }
+  | {
+      kind: 'certificate';
+      certificate: (version: string) => string;
+      signature: (version: string) => string;
+      identity: (version: string) => string;
+    };
 
 interface ToolSpec {
   repo: string;
   archive: (version: string, platformSuffix: string) => string;
   checksums: (version: string) => string;
+  // null: la herramienta no publica firmas y solo se verifica contra checksums.txt.
+  signature: Signature | null;
   platforms: Record<Platform, string>;
 }
 
@@ -32,6 +52,12 @@ const SPECS: Record<ToolName, ToolSpec> = {
     repo: 'aquasecurity/trivy',
     archive: (v, p) => `trivy_${v}_${p}.tar.gz`,
     checksums: (v) => `trivy_${v}_checksums.txt`,
+    signature: {
+      kind: 'bundle',
+      bundle: (v) => `trivy_${v}_checksums.txt.sigstore.json`,
+      identity: (v) =>
+        `https://github.com/aquasecurity/trivy/.github/workflows/reusable-release.yaml@refs/tags/v${v}`,
+    },
     platforms: {
       'darwin-arm64': 'macOS-ARM64',
       'darwin-x64': 'macOS-64bit',
@@ -43,6 +69,12 @@ const SPECS: Record<ToolName, ToolSpec> = {
     repo: 'anchore/syft',
     archive: (v, p) => `syft_${v}_${p}.tar.gz`,
     checksums: (v) => `syft_${v}_checksums.txt`,
+    signature: {
+      kind: 'certificate',
+      certificate: (v) => `syft_${v}_checksums.txt.pem`,
+      signature: (v) => `syft_${v}_checksums.txt.sig`,
+      identity: () => 'https://github.com/anchore/syft/.github/workflows/release.yaml@refs/heads/main',
+    },
     platforms: {
       'darwin-arm64': 'darwin_arm64',
       'darwin-x64': 'darwin_amd64',
@@ -54,6 +86,7 @@ const SPECS: Record<ToolName, ToolSpec> = {
     repo: 'gitleaks/gitleaks',
     archive: (v, p) => `gitleaks_${v}_${p}.tar.gz`,
     checksums: (v) => `gitleaks_${v}_checksums.txt`,
+    signature: null,
     platforms: {
       'darwin-arm64': 'darwin_arm64',
       'darwin-x64': 'darwin_x64',
@@ -65,12 +98,18 @@ const SPECS: Record<ToolName, ToolSpec> = {
 
 const TOOL_NAMES = Object.keys(SPECS) as ToolName[];
 
+interface GithubAsset {
+  name: string;
+  digest?: string | null;
+  browser_download_url: string;
+}
+
 interface GithubRelease {
   tag_name: string;
   published_at: string;
   draft: boolean;
   prerelease: boolean;
-  assets: { name: string; digest?: string | null; browser_download_url: string }[];
+  assets: GithubAsset[];
 }
 
 async function github<T>(path: string): Promise<T> {
@@ -83,6 +122,59 @@ async function github<T>(path: string): Promise<T> {
     throw new Error(`GitHub API ${path}: ${res.status} ${res.statusText}`);
   }
   return (await res.json()) as T;
+}
+
+async function download(release: GithubRelease, name: string, dir: string): Promise<string> {
+  const asset = release.assets.find((a) => a.name === name);
+  if (!asset) {
+    throw new Error(`${release.tag_name}: no se encontró ${name}`);
+  }
+  const res = await fetch(asset.browser_download_url);
+  if (!res.ok) {
+    throw new Error(`${release.tag_name}: no se pudo descargar ${name} (${res.status})`);
+  }
+  const path = join(dir, name);
+  writeFileSync(path, Buffer.from(await res.arrayBuffer()));
+  return path;
+}
+
+async function verifySignature(
+  name: ToolName,
+  version: string,
+  release: GithubRelease,
+  checksumsPath: string,
+  dir: string,
+): Promise<void> {
+  const signature = SPECS[name].signature;
+  if (!signature) {
+    console.warn(`⚠ ${name} no publica firmas: solo se verifica contra checksums.txt y el digest de GitHub`);
+    return;
+  }
+
+  const args = ['verify-blob'];
+  if (signature.kind === 'bundle') {
+    args.push('--bundle', await download(release, signature.bundle(version), dir));
+  } else {
+    args.push(
+      '--certificate', await download(release, signature.certificate(version), dir),
+      '--signature', await download(release, signature.signature(version), dir),
+    );
+  }
+  args.push(
+    '--certificate-identity', signature.identity(version),
+    '--certificate-oidc-issuer', GITHUB_OIDC_ISSUER,
+    checksumsPath,
+  );
+
+  try {
+    execFileSync('cosign', args, { stdio: 'pipe' });
+  } catch (error) {
+    const err = error as NodeJS.ErrnoException & { stderr?: Buffer };
+    if (err.code === 'ENOENT') {
+      throw new Error('cosign no está instalado (https://docs.sigstore.dev/cosign/system_config/installation/)');
+    }
+    throw new Error(`${name} ${release.tag_name}: firma de checksums.txt no válida\n${err.stderr ?? ''}`);
+  }
 }
 
 function ageInDays(publishedAt: string): number {
@@ -130,49 +222,65 @@ async function resolveTool(name: ToolName, version: string, allowRecent: boolean
     );
   }
 
-  const checksumsAsset = release.assets.find((a) => a.name === spec.checksums(version));
-  if (!checksumsAsset) {
-    throw new Error(`${name} ${tag}: no se encontró ${spec.checksums(version)}`);
-  }
-  const checksumsRes = await fetch(checksumsAsset.browser_download_url);
-  if (!checksumsRes.ok) {
-    throw new Error(`${name} ${tag}: no se pudo descargar ${checksumsAsset.name}`);
-  }
-  const checksums = new Map<string, string>();
-  for (const line of (await checksumsRes.text()).split('\n')) {
-    const [hash, file] = line.trim().split(/\s+/);
-    if (hash && file) checksums.set(file.replace(/^\*/, ''), hash.toLowerCase());
-  }
+  const dir = mkdtempSync(join(tmpdir(), `gops-${name}-`));
+  try {
+    const checksumsPath = await download(release, spec.checksums(version), dir);
+    await verifySignature(name, version, release, checksumsPath, dir);
 
-  const assets: PinnedTool['assets'] = {};
-  for (const [platformKey, suffix] of Object.entries(spec.platforms)) {
-    const file = spec.archive(version, suffix);
-    const sha256 = checksums.get(file);
-    if (!sha256 || !/^[a-f0-9]{64}$/.test(sha256)) {
-      throw new Error(`${name} ${tag}: falta el checksum de ${file}`);
+    const checksums = new Map<string, string>();
+    for (const line of readFileSync(checksumsPath, 'utf8').split('\n')) {
+      const [hash, file] = line.trim().split(/\s+/);
+      if (hash && file) checksums.set(file.replace(/^\*/, ''), hash.toLowerCase());
     }
-    // GitHub calcula su propio digest al subir el asset; debe coincidir con el checksums.txt.
-    const githubDigest = release.assets.find((a) => a.name === file)?.digest;
-    if (githubDigest && githubDigest !== `sha256:${sha256}`) {
-      throw new Error(`${name} ${tag}: el checksum de ${file} no coincide con el digest de GitHub`);
-    }
-    assets[platformKey] = { file, sha256 };
-  }
 
-  console.log(`✔ ${name} ${version} (publicada hace ${Math.floor(age)} días)`);
-  return { repo: spec.repo, version, tag, assets };
+    const assets: PinnedTool['assets'] = {};
+    for (const [platformKey, suffix] of Object.entries(spec.platforms)) {
+      const file = spec.archive(version, suffix);
+      const sha256 = checksums.get(file);
+      if (!sha256 || !/^[a-f0-9]{64}$/.test(sha256)) {
+        throw new Error(`${name} ${tag}: falta el checksum de ${file}`);
+      }
+      // GitHub calcula su propio digest al subir el asset; debe coincidir con el checksums.txt.
+      const githubDigest = release.assets.find((a) => a.name === file)?.digest;
+      if (githubDigest && githubDigest !== `sha256:${sha256}`) {
+        throw new Error(`${name} ${tag}: el checksum de ${file} no coincide con el digest de GitHub`);
+      }
+
+      // Se descarga el archivo para fijar también el SHA-256 del binario que
+      // contiene; la CLI lo usa para verificar el binario ya instalado.
+      const archivePath = await download(release, file, dir);
+      if (sha256File(archivePath) !== sha256) {
+        throw new Error(`${name} ${tag}: el archivo descargado ${file} no coincide con checksums.txt`);
+      }
+      const extractDir = join(dir, platformKey);
+      mkdirSync(extractDir);
+      execFileSync('tar', ['-xzf', archivePath, '-C', extractDir, name]);
+      const binarySha256 = sha256File(join(extractDir, name));
+      rmSync(archivePath);
+
+      assets[platformKey] = { file, sha256, binarySha256 };
+    }
+
+    const signed = spec.signature ? 'firma verificada' : 'sin firma';
+    console.log(`✔ ${name} ${version} (publicada hace ${Math.floor(age)} días, ${signed})`);
+    return { repo: spec.repo, version, tag, assets };
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
 }
 
 function render(tools: Record<ToolName, PinnedTool>): string {
   return `// Generado por scripts/update-tools.ts (npm run tools:update). No editar a mano.
-// Versiones fijadas de las herramientas externas que descarga la CLI y el
-// SHA-256 de cada archivo. Cualquier binario que no coincida se rechaza.
+// Versiones fijadas de las herramientas externas que descarga la CLI, el
+// SHA-256 de cada archivo y el del binario que contiene. Cualquier archivo o
+// binario que no coincida se rechaza.
 
 export type ToolName = ${TOOL_NAMES.map((n) => `'${n}'`).join(' | ')};
 
 export interface ToolAsset {
   file: string;
   sha256: string;
+  binarySha256: string;
 }
 
 export interface PinnedTool {
@@ -184,6 +292,10 @@ export interface PinnedTool {
 
 export const PINNED_TOOLS: Record<ToolName, PinnedTool> = ${JSON.stringify(tools, null, 2)};
 `;
+}
+
+function isComplete(tool: PinnedTool): boolean {
+  return Object.values(tool.assets).every((asset) => /^[a-f0-9]{64}$/.test(asset.binarySha256 ?? ''));
 }
 
 async function main() {
@@ -208,10 +320,14 @@ async function main() {
   const next = {} as Record<ToolName, PinnedTool>;
   for (const name of TOOL_NAMES) {
     const version = requested.get(name);
+    const pinned = current[name];
     if (version) {
       next[name] = await resolveTool(name, version, allowRecent);
-    } else if (current[name]) {
-      next[name] = current[name]!;
+    } else if (pinned && isComplete(pinned)) {
+      next[name] = pinned;
+    } else if (pinned) {
+      // Versión ya fijada pero generada sin algún campo nuevo: se recalcula.
+      next[name] = await resolveTool(name, pinned.version, true);
     } else {
       throw new Error(`${name} no tiene versión fijada; pásala como ${name}=<versión>`);
     }

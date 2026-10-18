@@ -83,7 +83,9 @@ ref) automatically. The `--git-*` flags take precedence.
 `gops creport scan` downloads Trivy, Syft and Gitleaks on first use into
 `~/.gitops-cli/tools/<tool>/<version>/`. Versions are pinned in
 `src/utils/tool-versions.ts`, together with the SHA-256 of every release
-archive; a download whose checksum does not match is rejected.
+archive and of the binary it contains; a download whose checksum does not match
+is rejected. Installed binaries are verified again on every use, so a tampered
+tools directory (for example, a poisoned CI cache) is detected and reinstalled.
 
 Run `gops tools install` to download them ahead of time (for example, when
 building a Docker image). `GOPS_TOOLS_DIR` changes the install directory.
@@ -97,7 +99,11 @@ npm run tools:update -- trivy=0.75.0 syft=1.54.0      # pin new versions
 ```
 
 Releases younger than 7 days are refused by default (`--allow-recent` overrides
-it) to leave time for a compromised release to be detected. Review the upstream
+it) to leave time for a compromised release to be detected. The script needs
+[cosign](https://docs.sigstore.dev/cosign/system_config/installation/) in the
+`PATH`: the `checksums.txt` of Trivy and Syft is only accepted if it is signed
+by their release workflow. Gitleaks does not sign its releases, so it is only
+checked against its `checksums.txt` and the GitHub asset digest. Review the upstream
 release notes, commit the regenerated file and publish a new CLI version.
 
 ## Releases

@@ -13,10 +13,10 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Check out repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
 
       - name: Setup Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: 20
           cache: npm
@@ -47,11 +47,12 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Check out repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
 
-      - uses: getgitops/cli-github-action@v1
+      - uses: getgitops/cli-github-action@9051a668ce26ef933b26b5b9a07cfca77f3f7f3c # v1.0.0
         with:
           command: creport scan
+          version: 1.2.1
           api-key: ${{ secrets.GITOPS_API_KEY }}
           service: gitops-cli
           project: gitops
