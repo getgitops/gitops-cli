@@ -96,7 +96,16 @@ That file is generated, do not edit it by hand. To review and bump versions
 ```bash
 npm run tools:update                                  # pinned vs. available versions
 npm run tools:update -- trivy=0.75.0 syft=1.54.0      # pin new versions
+npm run tools:update -- --latest                      # pin the newest eligible version of each
 ```
+
+The `Update scanners` workflow runs `--latest` every Monday and opens a pull
+request (`chore/update-scanners`) when there is a newer eligible version.
+
+Trivy still refreshes its vulnerability database on every scan (it is data, not
+code), always from the official repositories: the CLI passes them as flags, so a
+`trivy.yaml` in the scanned repository cannot redirect it. Update checks and
+telemetry of the scanners are disabled.
 
 Releases younger than 7 days are refused by default (`--allow-recent` overrides
 it) to leave time for a compromised release to be detected. The script needs

@@ -1,0 +1,77 @@
+name: Update scanners
+
+# Revisa cada semana si hay versiones nuevas de Trivy, Syft y Gitleaks con al
+# menos 7 días y abre una PR con src/utils/tool-versions.ts regenerado. Las
+# firmas y checksums se verifican igual que en local (npm run tools:update).
+
+on:
+  schedule:
+    - cron: '0 6 * * 1'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  pull-requests: write
+
+concurrency:
+  group: update-tools
+  cancel-in-progress: false
+
+jobs:
+  update:
+    runs-on: ubuntu-latest
+    env:
+      BRANCH: chore/update-scanners
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+
+      - name: Setup Node.js
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Install cosign
+        uses: sigstore/cosign-installer@398d4b0eeef1380460a10c8013a76f728fb906ac # v3.9.1
+        with:
+          cosign-release: v3.1.3
+
+      - name: Update pinned versions
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: npm run --silent tools:update -- --latest | tee "$RUNNER_TEMP/summary.txt"
+
+      - name: Open pull request
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if git diff --quiet; then
+            echo "Sin cambios."
+            exit 0
+          fi
+
+          {
+            echo "Versiones nuevas de los scanners (publicadas hace al menos 7 días, firmas y checksums verificados):"
+            echo
+            grep '^- ' "$RUNNER_TEMP/summary.txt"
+            echo
+            echo "Antes de mergear revisa las release notes. Después publica una nueva versión de la CLI."
+          } > "$RUNNER_TEMP/body.md"
+
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git checkout -B "$BRANCH"
+          git commit -am 'chore: update pinned scanners'
+          git push --force origin "$BRANCH"
+
+          if gh pr view "$BRANCH" --json state --jq .state 2>/dev/null | grep -q OPEN; then
+            gh pr edit "$BRANCH" --body-file "$RUNNER_TEMP/body.md"
+          else
+            gh pr create --base main --head "$BRANCH" \
+              --title 'chore: update pinned scanners' \
+              --body-file "$RUNNER_TEMP/body.md"
+          fi

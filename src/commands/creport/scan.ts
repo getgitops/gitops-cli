@@ -10,6 +10,12 @@ import { ensureGitleaksInstalled, ensureSyftInstalled, ensureTrivyInstalled } fr
 
 const execFileAsync = promisify(execFile);
 
+// La base de datos de vulnerabilidades de Trivy se sigue actualizando en cada
+// escaneo (son datos, no código), pero siempre desde los repositorios oficiales:
+// los flags tienen prioridad sobre un trivy.yaml del repo escaneado o TRIVY_*.
+const TRIVY_DB_REPOSITORIES = 'mirror.gcr.io/aquasec/trivy-db:2,ghcr.io/aquasecurity/trivy-db:2';
+const TRIVY_JAVA_DB_REPOSITORIES = 'mirror.gcr.io/aquasec/trivy-java-db:1,ghcr.io/aquasecurity/trivy-java-db:1';
+
 
 export class ScanCommand extends Command {
   constructor(options: any) {
@@ -159,6 +165,10 @@ export class ScanCommand extends Command {
                 'fs',
                 '--format', 'json',
                 '--quiet',
+                '--db-repository', TRIVY_DB_REPOSITORIES,
+                '--java-db-repository', TRIVY_JAVA_DB_REPOSITORIES,
+                '--skip-version-check',
+                '--disable-telemetry',
                 path
             ], 
             {
@@ -188,7 +198,9 @@ export class ScanCommand extends Command {
                 '--quiet'
             ],
             {
-                maxBuffer: 50 * 1024 * 1024
+                maxBuffer: 50 * 1024 * 1024,
+                // La versión la fija la CLI; Syft no debe consultar si hay otra más nueva.
+                env: { ...process.env, SYFT_CHECK_FOR_APP_UPDATE: 'false' }
             }
         );
 

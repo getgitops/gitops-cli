@@ -7,6 +7,7 @@
  *   npm run tools:update                                   # muestra fijadas vs. disponibles
  *   npm run tools:update -- trivy=0.75.0 syft=1.54.0       # fija nuevas versiones
  *   npm run tools:update -- trivy=0.75.0 --allow-recent    # ignora la antigüedad mínima
+ *   npm run tools:update -- --latest                       # fija la última versión elegible de cada una
  *
  * Por defecto se rechazan releases con menos de MIN_RELEASE_AGE_DAYS días para
  * dar margen a que se detecte una release comprometida antes de adoptarla.
@@ -29,14 +30,14 @@ type Platform = 'darwin-arm64' | 'darwin-x64' | 'linux-arm64' | 'linux-x64';
 
 // Firma keyless (sigstore) del checksums.txt. `identity` es el workflow de
 // GitHub Actions que firma la release; cualquier otra identidad se rechaza.
-type Signature =
-  | { kind: 'bundle'; bundle: (version: string) => string; identity: (version: string) => string }
-  | {
-      kind: 'certificate';
-      certificate: (version: string) => string;
-      signature: (version: string) => string;
-      identity: (version: string) => string;
-    };
+// Se usa el bundle si la release lo publica y, si no, el formato antiguo de
+// certificado + firma (p. ej. syft < 1.54.0).
+interface Signature {
+  identity: (version: string) => string;
+  bundle: (version: string) => string;
+  certificate?: (version: string) => string;
+  signature?: (version: string) => string;
+}
 
 interface ToolSpec {
   repo: string;
@@ -53,7 +54,6 @@ const SPECS: Record<ToolName, ToolSpec> = {
     archive: (v, p) => `trivy_${v}_${p}.tar.gz`,
     checksums: (v) => `trivy_${v}_checksums.txt`,
     signature: {
-      kind: 'bundle',
       bundle: (v) => `trivy_${v}_checksums.txt.sigstore.json`,
       identity: (v) =>
         `https://github.com/aquasecurity/trivy/.github/workflows/reusable-release.yaml@refs/tags/v${v}`,
@@ -70,7 +70,7 @@ const SPECS: Record<ToolName, ToolSpec> = {
     archive: (v, p) => `syft_${v}_${p}.tar.gz`,
     checksums: (v) => `syft_${v}_checksums.txt`,
     signature: {
-      kind: 'certificate',
+      bundle: (v) => `syft_${v}_checksums.txt.sigstore.json`,
       certificate: (v) => `syft_${v}_checksums.txt.pem`,
       signature: (v) => `syft_${v}_checksums.txt.sig`,
       identity: () => 'https://github.com/anchore/syft/.github/workflows/release.yaml@refs/heads/main',
@@ -151,14 +151,20 @@ async function verifySignature(
     return;
   }
 
+  const hasAsset = (file?: string) => !!file && release.assets.some((a) => a.name === file);
+  const certificate = signature.certificate?.(version);
+  const sig = signature.signature?.(version);
+
   const args = ['verify-blob'];
-  if (signature.kind === 'bundle') {
+  if (hasAsset(signature.bundle(version))) {
     args.push('--bundle', await download(release, signature.bundle(version), dir));
-  } else {
+  } else if (certificate && sig && hasAsset(certificate) && hasAsset(sig)) {
     args.push(
-      '--certificate', await download(release, signature.certificate(version), dir),
-      '--signature', await download(release, signature.signature(version), dir),
+      '--certificate', await download(release, certificate, dir),
+      '--signature', await download(release, sig, dir),
     );
+  } else {
+    throw new Error(`${name} ${release.tag_name}: no se encontró la firma de checksums.txt`);
   }
   args.push(
     '--certificate-identity', signature.identity(version),
@@ -189,12 +195,45 @@ async function loadCurrent(): Promise<Partial<Record<ToolName, PinnedTool>>> {
   }
 }
 
+function compareVersions(a: string, b: string): number {
+  const pa = a.split('.').map(Number);
+  const pb = b.split('.').map(Number);
+  for (let i = 0; i < Math.max(pa.length, pb.length); i++) {
+    const diff = (pa[i] ?? 0) - (pb[i] ?? 0);
+    if (diff !== 0) return diff;
+  }
+  return 0;
+}
+
+async function stableReleases(name: ToolName) {
+  const releases = await github<GithubRelease[]>(`/repos/${SPECS[name].repo}/releases?per_page=20`);
+  const stable = releases.filter((r) => !r.draft && !r.prerelease);
+  return {
+    latest: stable[0],
+    eligible: stable.find((r) => ageInDays(r.published_at) >= MIN_RELEASE_AGE_DAYS),
+  };
+}
+
+// Versiones más nuevas que la fijada con al menos MIN_RELEASE_AGE_DAYS días.
+async function findUpdates(current: Partial<Record<ToolName, PinnedTool>>): Promise<Map<ToolName, string>> {
+  const updates = new Map<ToolName, string>();
+  for (const name of TOOL_NAMES) {
+    const { eligible } = await stableReleases(name);
+    const version = eligible?.tag_name.replace(/^v/, '');
+    const pinned = current[name]?.version;
+    if (version && (!pinned || compareVersions(version, pinned) > 0)) {
+      updates.set(name, version);
+      console.log(
+        `- ${name} ${pinned ?? '-'} → ${version}: https://github.com/${SPECS[name].repo}/releases/tag/v${version}`,
+      );
+    }
+  }
+  return updates;
+}
+
 async function showStatus(current: Partial<Record<ToolName, PinnedTool>>) {
   for (const name of TOOL_NAMES) {
-    const releases = await github<GithubRelease[]>(`/repos/${SPECS[name].repo}/releases?per_page=20`);
-    const stable = releases.filter((r) => !r.draft && !r.prerelease);
-    const latest = stable[0];
-    const eligible = stable.find((r) => ageInDays(r.published_at) >= MIN_RELEASE_AGE_DAYS);
+    const { latest, eligible } = await stableReleases(name);
     const fmt = (r?: GithubRelease) =>
       r ? `${r.tag_name.replace(/^v/, '')} (${Math.floor(ageInDays(r.published_at))}d)` : '-';
 
@@ -312,7 +351,18 @@ async function main() {
   }
 
   const current = await loadCurrent();
-  if (requested.size === 0) {
+  if (args.includes('--latest')) {
+    if (requested.size > 0) {
+      throw new Error('--latest no se puede combinar con versiones explícitas');
+    }
+    for (const [name, version] of await findUpdates(current)) {
+      requested.set(name, version);
+    }
+    if (requested.size === 0) {
+      console.log('Todas las herramientas están en la última versión elegible.');
+      return;
+    }
+  } else if (requested.size === 0) {
     await showStatus(current);
     return;
   }
